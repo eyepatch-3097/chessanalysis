@@ -2,10 +2,9 @@ import requests
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
-from matplotlib.patches import FancyBboxPatch
 
 # Replace with your Chess.com username
-USERNAME = "eyepatch98"
+USERNAME = input("your chess.com username: ")
 
 def fetch_archives(username):
     """Fetch all game archive URLs for the user."""
@@ -42,18 +41,28 @@ def clean_opening_name(opening):
         return opening.split("/")[-1].replace("-", " ").capitalize()
     return opening
 
-def extract_opening_stats(games):
-    """Extract opening stats from games."""
+def extract_opening_stats(games, color):
+    """Extract opening stats based on whether the user played as white or black."""
     stats = {}
     for game in games:
         try:
+            # Filter games based on color
+            if color == "white" and game["white"]["username"].lower() != USERNAME.lower():
+                continue
+            if color == "black" and game["black"]["username"].lower() != USERNAME.lower():
+                continue
+
             pgn = game.get("pgn", "")
             opening_line = next((line for line in pgn.split("\n") if line.startswith("[Opening ")), None)
             if not opening_line:
                 eco_url = game.get("eco_url", "")
-                opening = clean_opening_name(eco_url if eco_url else game.get("eco", "Unknown Opening"))
+                opening = clean_opening_name(eco_url if eco_url else game.get("eco", "Undefined"))
             else:
                 opening = clean_opening_name(opening_line.split('"')[1])
+
+            # Skip undefined openings
+            if opening.lower() == "undefined":
+                continue
 
             result_line = next((line for line in pgn.split("\n") if line.startswith("[Result ")), None)
             if not result_line:
@@ -63,9 +72,9 @@ def extract_opening_stats(games):
             if opening not in stats:
                 stats[opening] = {"Win": 0, "Loss": 0, "Draw": 0}
 
-            if result == "1-0":
+            if (color == "white" and result == "1-0") or (color == "black" and result == "0-1"):
                 stats[opening]["Win"] += 1
-            elif result == "0-1":
+            elif (color == "white" and result == "0-1") or (color == "black" and result == "1-0"):
                 stats[opening]["Loss"] += 1
             elif result == "1/2-1/2":
                 stats[opening]["Draw"] += 1
@@ -92,16 +101,12 @@ def calculate_percentages(stats):
             })
     return pd.DataFrame(percentages) if percentages else pd.DataFrame()
 
-# Fetch and process game data
-archives = fetch_archives(USERNAME)
-all_games = []
-for archive in archives:
-    all_games.extend(fetch_games(archive))
+def create_graph(opening_percentages, output_file, title):
+    """Create and save the stacked bar graph."""
+    if opening_percentages.empty:
+        print(f"No valid data to plot for {title}.")
+        return
 
-opening_stats = extract_opening_stats(all_games)
-opening_percentages = calculate_percentages(opening_stats)
-
-if not opening_percentages.empty:
     # Sort and focus on top 10 most-used openings
     opening_percentages = opening_percentages.sort_values(by="Total Games", ascending=False).head(10)
 
@@ -131,11 +136,6 @@ if not opening_percentages.empty:
         edgecolor="black"
     )
 
-    # Add rounded corners to bars
-    for bar in ax.patches:
-        bar.set_linewidth(0)
-        bar.set_alpha(0.9)
-
     # Add a crown to the most successful opening
     for i, opening in enumerate(opening_percentages["Opening"]):
         if opening == most_successful_opening:
@@ -150,7 +150,7 @@ if not opening_percentages.empty:
             )
 
     # Customize the graph
-    ax.set_title(f"Win/Loss/Draw Percentages for Top 10 Openings for {USERNAME}", color="white", fontsize=16)
+    ax.set_title(title, color="black", fontsize=16)
     ax.set_xlabel("Opening", color="black")  # Changed to black
     ax.set_ylabel("Percentage", color="black")  # Changed to black
     ax.tick_params(axis="x", colors="black", rotation=45)  # Changed to black
@@ -158,7 +158,22 @@ if not opening_percentages.empty:
     ax.legend(title="Result", loc="upper left", facecolor="black", edgecolor="gray", labelcolor="white")
 
     # Save the plot as an image file
-    output_file = "top_10_openings_stacked_bar_pretty.png"
     plt.tight_layout()
     plt.savefig(output_file, dpi=300)
-    print(f"Stacked bar graph saved as {output_file}. You can download it to view.")
+    print(f"Graph saved as {output_file}. You can download it to view.")
+
+# Fetch and process game data
+archives = fetch_archives(USERNAME)
+all_games = []
+for archive in archives:
+    all_games.extend(fetch_games(archive))
+
+# Extract stats for games where the user played as white
+white_opening_stats = extract_opening_stats(all_games, color="white")
+white_percentages = calculate_percentages(white_opening_stats)
+create_graph(white_percentages, "as_white.png", "Win/Loss/Draw Percentages for Top 10 Openings (As White)")
+
+# Extract stats for games where the user played as black
+black_opening_stats = extract_opening_stats(all_games, color="black")
+black_percentages = calculate_percentages(black_opening_stats)
+create_graph(black_percentages, "as_black.png", "Win/Loss/Draw Percentages for Top 10 Openings (As Black)")
